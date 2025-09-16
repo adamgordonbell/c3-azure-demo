@@ -4,7 +4,8 @@ using Pulumi.AzureNative.Storage;
 using Pulumi.AzureNative.Storage.Inputs;
 using Pulumi.AzureNative.Web;
 using Pulumi.AzureNative.Web.Inputs;
-using Pulumi.Command.Local;
+using Pulumi.AzureNative.CognitiveServices;
+using Pulumi.AzureNative.Authorization;
 using System.Collections.Generic;
 
 return await Pulumi.Deployment.RunAsync(() =>
@@ -32,6 +33,21 @@ return await Pulumi.Deployment.RunAsync(() =>
         return $"DefaultEndpointsProtocol=https;AccountName={acctName};AccountKey={key};EndpointSuffix=core.windows.net";
     });
 
+    // Azure OpenAI (Cognitive Services)
+    var openAI = new Account("dad-joke-openai", new AccountArgs
+    {
+        ResourceGroupName = rg.Name,
+        Location = "eastus",
+        Kind = "OpenAI",
+        Sku = new Pulumi.AzureNative.CognitiveServices.Inputs.SkuArgs
+        {
+            Name = "S0"
+        }
+    });
+
+    // Note: Azure OpenAI model deployment can be done manually in Azure Portal
+    // Different regions support different models, so this is commented out for flexibility
+
     // Linux Consumption plan for Functions
     var plan = new AppServicePlan("dad-joke-plan", new AppServicePlanArgs
     {
@@ -40,9 +56,6 @@ return await Pulumi.Deployment.RunAsync(() =>
         Reserved = true,                  // IMPORTANT: Linux
         Sku = new SkuDescriptionArgs { Name = "Y1", Tier = "Dynamic" }
     });
-
-    // Note: Assuming function-app.zip already exists in ../function/
-    // (You can build this manually with: dotnet publish -c Release -o bin/Release/net8.0/publish && cd bin/Release/net8.0/publish && zip -r ../../../function-app.zip .)
 
     // Blob container to hold packages
     var container = new BlobContainer("packages", new BlobContainerArgs
@@ -63,7 +76,7 @@ return await Pulumi.Deployment.RunAsync(() =>
         ContentType = "application/zip",
     });
 
-    // Build a SAS URL (read) for the container so the app can fetch the zip
+    // Build a SAS URL for the container so the app can fetch the zip
     var packageSasUrl = Output.Tuple(stg.Name, rg.Name, container.Name, packageBlob.Name).Apply(async t =>
     {
         var (acct, rgName, cont, blob) = t;
@@ -89,6 +102,10 @@ return await Pulumi.Deployment.RunAsync(() =>
         ServerFarmId = plan.Id,
         Kind = "functionapp,linux",
         HttpsOnly = true,
+        Identity = new Pulumi.AzureNative.Web.Inputs.ManagedServiceIdentityArgs
+        {
+            Type = Pulumi.AzureNative.Web.ManagedServiceIdentityType.SystemAssigned
+        },
         SiteConfig = new SiteConfigArgs
         {
             LinuxFxVersion = "DOTNET-ISOLATED|8.0",
@@ -98,32 +115,27 @@ return await Pulumi.Deployment.RunAsync(() =>
                 new NameValuePairArgs { Name = "FUNCTIONS_WORKER_RUNTIME",   Value = "dotnet-isolated" },
                 new NameValuePairArgs { Name = "AzureWebJobsStorage",        Value = storageConn },
                 new NameValuePairArgs { Name = "WEBSITE_RUN_FROM_PACKAGE",   Value = packageSasUrl },
-                // Optional: anonymous HTTP triggers for demos
-                // new NameValuePairArgs { Name = "AzureWebJobsFeatureFlags", Value = "EnableWorkerIndexing" },
+                // Azure OpenAI configuration
+                new NameValuePairArgs { Name = "AZURE_OPENAI_ENDPOINT", Value = "https://dad-joke-openai-custom.openai.azure.com/" },
+                new NameValuePairArgs { Name = "AZURE_OPENAI_DEPLOYMENT_NAME", Value = "gpt-35-turbo" },
             },
             Http20Enabled = true,
         }
-    }, new CustomResourceOptions { DependsOn = { packageBlob } });
-
-    // (Example) tables you had
-    var jokesTable = new Table("jokes", new TableArgs
-    {
-        ResourceGroupName = rg.Name,
-        AccountName = stg.Name,
-        TableName = "jokes"
     });
 
-    var statsTable = new Table("stats", new TableArgs
+    // Role assignment to give Function App access to Azure OpenAI
+    var roleAssignment = new RoleAssignment("openai-access", new RoleAssignmentArgs
     {
-        ResourceGroupName = rg.Name,
-        AccountName = stg.Name,
-        TableName = "stats"
+        Scope = openAI.Id,
+        RoleDefinitionId = "/subscriptions/0282681f-7a9e-424b-80b2-96babd57a8a1/providers/Microsoft.Authorization/roleDefinitions/5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", // Cognitive Services OpenAI User
+        PrincipalId = app.Identity.Apply(i => i!.PrincipalId!),
+        PrincipalType = PrincipalType.ServicePrincipal
     });
 
     return new Dictionary<string, object?>
     {
         ["functionAppUrl"] = app.DefaultHostName.Apply(h => $"https://{h}"),
         ["jokeEndpoint"]   = app.DefaultHostName.Apply(h => $"https://{h}/api/joke"),
-        ["statsEndpoint"]  = app.DefaultHostName.Apply(h => $"https://{h}/api/stats"),
+        ["openAIAccountName"] = openAI.Name
     };
 });

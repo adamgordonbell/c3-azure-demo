@@ -1,57 +1,54 @@
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Azure.Functions.Worker.Http;
 using Microsoft.Extensions.Logging;
-using System.Net;
-using System.Net.Http.Json;
+using Azure.AI.OpenAI;
 using System.Text.Json;
-using Azure.Data.Tables;
-using Azure.Security.KeyVault.Secrets;
-using Azure;
 
 namespace DadJokeFunctionApp;
 
 public class JokeFunctions
 {
     private readonly ILogger _logger;
-    private readonly HttpClient _httpClient;
-    private readonly TableServiceClient? _tableServiceClient;
-    private readonly SecretClient? _secretClient;
+    private readonly OpenAIClient? _openAiClient;
 
-    public JokeFunctions(ILoggerFactory loggerFactory, HttpClient httpClient,
-        TableServiceClient? tableServiceClient = null, SecretClient? secretClient = null)
+    public JokeFunctions(ILoggerFactory loggerFactory, OpenAIClient? openAiClient = null)
     {
         _logger = loggerFactory.CreateLogger<JokeFunctions>();
-        _httpClient = httpClient;
-        _tableServiceClient = tableServiceClient;
-        _secretClient = secretClient;
+        _openAiClient = openAiClient;
     }
 
     [Function("GetJoke")]
     public async Task<HttpResponseData> GetJoke(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", "post", Route = "joke")] HttpRequestData req)
     {
-        _logger.LogInformation("Dad joke request received");
+        _logger.LogInformation("Joke request received");
 
         try
         {
-            // Extract keywords from query or body
-            var keywords = await ExtractKeywords(req);
+            string? keywords = req.Query["keywords"];
+            _logger.LogInformation($"Keywords: {keywords ?? "none"}");
 
-            // Generate joke using LLM
-            var joke = await GenerateJoke(keywords);
+            if (_openAiClient == null)
+            {
+                _logger.LogError("Azure OpenAI client is null - environment variables not configured");
+                var errorResponse = req.CreateResponse(System.Net.HttpStatusCode.InternalServerError);
+                errorResponse.Headers.Add("Content-Type", "application/json");
+                var error = new { error = "Azure OpenAI not configured" };
+                await errorResponse.WriteStringAsync(JsonSerializer.Serialize(error));
+                return errorResponse;
+            }
 
-            // Store joke in table storage
-            var requestCount = await StoreJoke(joke, keywords);
+            _logger.LogInformation("Calling GenerateAIJoke");
+            var joke = await GenerateAIJoke(keywords);
+            _logger.LogInformation($"Generated joke: {joke}");
 
-            // Return response
-            var response = req.CreateResponse(HttpStatusCode.OK);
+            var response = req.CreateResponse(System.Net.HttpStatusCode.OK);
             response.Headers.Add("Content-Type", "application/json");
 
             var result = new
             {
                 joke = joke,
                 keywords = keywords,
-                requestCount = requestCount,
                 timestamp = DateTime.UtcNow
             };
 
@@ -60,311 +57,50 @@ public class JokeFunctions
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error generating joke");
-            var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
+            _logger.LogError(ex, "Error generating joke: {Message}", ex.Message);
+
+            var errorResponse = req.CreateResponse(System.Net.HttpStatusCode.InternalServerError);
             errorResponse.Headers.Add("Content-Type", "application/json");
-            await errorResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Failed to generate joke" }));
+
+            var error = new { error = "Failed to generate joke", details = ex.Message };
+            await errorResponse.WriteStringAsync(JsonSerializer.Serialize(error));
             return errorResponse;
         }
     }
 
-    [Function("GetStats")]
-    public async Task<HttpResponseData> GetStats(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "stats")] HttpRequestData req)
+    private async Task<string> GenerateAIJoke(string? keywords)
     {
-        _logger.LogInformation("Stats request received");
-
-        try
-        {
-            var stats = await GetJokeStatistics();
-
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Content-Type", "application/json");
-            await response.WriteStringAsync(JsonSerializer.Serialize(stats));
-            return response;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving stats");
-            var errorResponse = req.CreateResponse(HttpStatusCode.InternalServerError);
-            errorResponse.Headers.Add("Content-Type", "application/json");
-            await errorResponse.WriteStringAsync(JsonSerializer.Serialize(new { error = "Failed to retrieve stats" }));
-            return errorResponse;
-        }
-    }
-
-    private async Task<string?> ExtractKeywords(HttpRequestData req)
-    {
-        // Try query parameter first
-        var query = System.Web.HttpUtility.ParseQueryString(req.Url.Query);
-        var keywords = query["keywords"];
-
-        if (!string.IsNullOrEmpty(keywords))
-            return keywords;
-
-        // Try request body for POST requests
-        if (req.Method.Equals("POST", StringComparison.OrdinalIgnoreCase))
-        {
-            var body = await req.ReadAsStringAsync();
-            if (!string.IsNullOrEmpty(body))
-            {
-                try
-                {
-                    var requestData = JsonSerializer.Deserialize<Dictionary<string, object>>(body);
-                    if (requestData?.ContainsKey("keywords") == true)
-                    {
-                        return requestData["keywords"]?.ToString();
-                    }
-                }
-                catch
-                {
-                    // If JSON parsing fails, treat the whole body as keywords
-                    return body.Trim('"');
-                }
-            }
-        }
-
-        return null;
-    }
-
-    private async Task<string> GenerateJoke(string? keywords)
-    {
-        // For demo purposes, use a simple approach first
-        // In production, you'd call OpenAI API or Azure OpenAI
+        var deploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-35-turbo";
+        _logger.LogInformation($"Using deployment name: {deploymentName}");
 
         var prompt = string.IsNullOrEmpty(keywords)
-            ? "Tell me a clean dad joke"
-            : $"Tell me a clean dad joke that incorporates these keywords: {keywords}";
+            ? "Generate a clean, family-friendly dad joke. Just return the joke, nothing else."
+            : $"Generate a clean, family-friendly dad joke about {keywords}. Just return the joke, nothing else.";
 
-        // Try to get OpenAI API key from Key Vault or environment
-        var apiKey = await GetOpenAiApiKey();
+        _logger.LogInformation($"Prompt: {prompt}");
 
-        if (string.IsNullOrEmpty(apiKey))
+        var chatRequest = new ChatCompletionsOptions(deploymentName, new[]
         {
-            // Fallback to hardcoded jokes for demo
-            return GenerateFallbackJoke(keywords);
-        }
-
-        try
+            new ChatRequestUserMessage(prompt)
+        })
         {
-            return await CallOpenAiApi(prompt, apiKey);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to call OpenAI API, using fallback");
-            return GenerateFallbackJoke(keywords);
-        }
-    }
-
-    private async Task<string?> GetOpenAiApiKey()
-    {
-        // Try Key Vault first
-        if (_secretClient != null)
-        {
-            try
-            {
-                var secret = await _secretClient.GetSecretAsync("openai-api-key");
-                return secret.Value.Value;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to get API key from Key Vault");
-            }
-        }
-
-        // Fallback to environment variable
-        return Environment.GetEnvironmentVariable("OPENAI_API_KEY");
-    }
-
-    private async Task<string> CallOpenAiApi(string prompt, string apiKey)
-    {
-        var requestData = new
-        {
-            model = "gpt-3.5-turbo",
-            messages = new[]
-            {
-                new { role = "system", content = "You are a dad joke comedian. Always return clean, family-friendly dad jokes. Keep responses under 200 characters." },
-                new { role = "user", content = prompt }
-            },
-            max_tokens = 100,
-            temperature = 0.8
+            MaxTokens = 100,
+            Temperature = 0.9f
         };
 
-        _httpClient.DefaultRequestHeaders.Clear();
-        _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
+        _logger.LogInformation("Making Azure OpenAI API call");
+        var response = await _openAiClient!.GetChatCompletionsAsync(chatRequest);
+        _logger.LogInformation($"Response received with {response.Value.Choices.Count} choices");
 
-        var response = await _httpClient.PostAsJsonAsync("https://api.openai.com/v1/chat/completions", requestData);
-        response.EnsureSuccessStatusCode();
+        var joke = response.Value.Choices[0].Message.Content?.Trim();
+        _logger.LogInformation($"Raw joke from API: {joke}");
 
-        var responseContent = await response.Content.ReadAsStringAsync();
-        var result = JsonSerializer.Deserialize<JsonElement>(responseContent);
+        if (string.IsNullOrEmpty(joke))
+        {
+            throw new InvalidOperationException("Azure OpenAI returned empty joke content");
+        }
 
-        return result.GetProperty("choices")[0]
-                   .GetProperty("message")
-                   .GetProperty("content")
-                   .GetString() ?? "Why don't scientists trust atoms? Because they make up everything!";
+        return joke;
     }
 
-    private string GenerateFallbackJoke(string? keywords)
-    {
-        var jokes = new[]
-        {
-            "Why don't scientists trust atoms? Because they make up everything!",
-            "I told my wife she was drawing her eyebrows too high. She looked surprised.",
-            "Why did the scarecrow win an award? He was outstanding in his field!",
-            "What do you call a fake noodle? An impasta!",
-            "Why don't eggs tell jokes? They'd crack each other up!",
-            "What's the best thing about Switzerland? I don't know, but the flag is a big plus.",
-            "Why did the coffee file a police report? It got mugged!",
-            "What do you call a bear with no teeth? A gummy bear!"
-        };
-
-        // If keywords provided, try to find a somewhat relevant joke
-        if (!string.IsNullOrEmpty(keywords))
-        {
-            var keywordLower = keywords.ToLower();
-            if (keywordLower.Contains("science") || keywordLower.Contains("atom"))
-                return jokes[0];
-            if (keywordLower.Contains("food") || keywordLower.Contains("noodle"))
-                return jokes[3];
-            if (keywordLower.Contains("coffee") || keywordLower.Contains("drink"))
-                return jokes[6];
-        }
-
-        // Return random joke
-        var random = new Random();
-        return jokes[random.Next(jokes.Length)];
-    }
-
-    private async Task<int> StoreJoke(string joke, string? keywords)
-    {
-        if (_tableServiceClient == null)
-        {
-            _logger.LogWarning("Table service client not available, cannot store joke");
-            return 1; // Return dummy count
-        }
-
-        try
-        {
-            var tableClient = _tableServiceClient.GetTableClient("jokes");
-            await tableClient.CreateIfNotExistsAsync();
-
-            // Store the joke
-            var jokeEntity = new TableEntity("joke", Guid.NewGuid().ToString())
-            {
-                ["JokeText"] = joke,
-                ["Keywords"] = keywords ?? "",
-                ["Timestamp"] = DateTime.UtcNow,
-                ["Date"] = DateTime.UtcNow.ToString("yyyy-MM-dd")
-            };
-
-            await tableClient.AddEntityAsync(jokeEntity);
-
-            // Update/increment request count
-            var statsTableClient = _tableServiceClient.GetTableClient("stats");
-            await statsTableClient.CreateIfNotExistsAsync();
-
-            var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
-            var statsEntity = new TableEntity("daily", today)
-            {
-                ["Count"] = 1,
-                ["LastUpdated"] = DateTime.UtcNow
-            };
-
-            try
-            {
-                // Try to get existing count
-                var existing = await statsTableClient.GetEntityAsync<TableEntity>("daily", today);
-                var currentCount = existing.Value.GetInt32("Count") ?? 0;
-                statsEntity["Count"] = currentCount + 1;
-                await statsTableClient.UpdateEntityAsync(statsEntity, existing.Value.ETag);
-                return currentCount + 1;
-            }
-            catch (RequestFailedException ex) when (ex.Status == 404)
-            {
-                // Entity doesn't exist, create new
-                await statsTableClient.AddEntityAsync(statsEntity);
-                return 1;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to store joke in table storage");
-            return 1; // Return dummy count
-        }
-    }
-
-    private async Task<object> GetJokeStatistics()
-    {
-        if (_tableServiceClient == null)
-        {
-            return new
-            {
-                totalRequests = 0,
-                todayRequests = 0,
-                recentJokes = new string[0],
-                message = "Table storage not available"
-            };
-        }
-
-        try
-        {
-            var jokesTableClient = _tableServiceClient.GetTableClient("jokes");
-            var statsTableClient = _tableServiceClient.GetTableClient("stats");
-
-            // Get today's count
-            var today = DateTime.UtcNow.ToString("yyyy-MM-dd");
-            var todayCount = 0;
-            try
-            {
-                var todayStats = await statsTableClient.GetEntityAsync<TableEntity>("daily", today);
-                todayCount = todayStats.Value.GetInt32("Count") ?? 0;
-            }
-            catch (RequestFailedException ex) when (ex.Status == 404)
-            {
-                // No requests today
-            }
-
-            // Get total count (sum of all daily counts)
-            var totalCount = 0;
-            await foreach (var entity in statsTableClient.QueryAsync<TableEntity>(filter: "PartitionKey eq 'daily'"))
-            {
-                totalCount += entity.GetInt32("Count") ?? 0;
-            }
-
-            // Get recent jokes (last 5)
-            var recentJokes = new List<object>();
-            await foreach (var entity in jokesTableClient.QueryAsync<TableEntity>(
-                filter: "PartitionKey eq 'joke'",
-                maxPerPage: 5))
-            {
-                recentJokes.Add(new
-                {
-                    joke = entity.GetString("JokeText"),
-                    keywords = entity.GetString("Keywords"),
-                    timestamp = entity.GetDateTime("Timestamp")
-                });
-
-                if (recentJokes.Count >= 5) break;
-            }
-
-            return new
-            {
-                totalRequests = totalCount,
-                todayRequests = todayCount,
-                recentJokes = recentJokes.OrderByDescending(j => ((dynamic)j).timestamp).ToList()
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to retrieve statistics");
-            return new
-            {
-                totalRequests = 0,
-                todayRequests = 0,
-                recentJokes = new string[0],
-                error = "Failed to retrieve statistics"
-            };
-        }
-    }
 }
