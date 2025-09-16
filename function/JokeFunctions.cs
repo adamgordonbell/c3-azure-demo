@@ -25,7 +25,7 @@ public class JokeFunctions
 
         try
         {
-            string? keywords = req.Query["keywords"];
+            string? keywords = req.Query["keywords"] ?? req.Query["keyword"];
             _logger.LogInformation($"Keywords: {keywords ?? "none"}");
 
             if (_openAiClient == null)
@@ -74,8 +74,8 @@ public class JokeFunctions
         _logger.LogInformation($"Using deployment name: {deploymentName}");
 
         var prompt = string.IsNullOrEmpty(keywords)
-            ? "Generate a clean, family-friendly dad joke. Just return the joke, nothing else."
-            : $"Generate a clean, family-friendly dad joke about {keywords}. Just return the joke, nothing else.";
+            ? "Generate a clean, family-friendly joke. Just return the joke, nothing else."
+            : $"Generate a clean, family-friendly joke about {keywords}. Just return the joke, nothing else.";
 
         _logger.LogInformation($"Prompt: {prompt}");
 
