@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__pulumi__pulumi-registry-get-resource"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
