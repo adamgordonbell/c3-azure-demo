@@ -351,3 +351,13 @@ MigrationBackup/
 
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
+
+# Azure Functions
+local.settings.json
+*.log
+function-app.zip
+publish/
+
+# Pulumi
+Pulumi.*.yaml
+!Pulumi.yaml
