@@ -1,4 +1,4 @@
-using Pulumi;
+﻿using Pulumi;
 using Pulumi.AzureNative.Resources;
 using Pulumi.AzureNative.Storage;
 using Pulumi.AzureNative.Storage.Inputs;
@@ -7,9 +7,13 @@ using Pulumi.AzureNative.Web.Inputs;
 using Pulumi.AzureNative.CognitiveServices;
 using Pulumi.AzureNative.Authorization;
 using System.Collections.Generic;
+using System;
 
 return await Pulumi.Deployment.RunAsync(() =>
 {
+    // Get current Azure config
+    var clientConfig = Pulumi.AzureNative.Authorization.GetClientConfig.Invoke();
+
     var rg = new ResourceGroup("dad-joke-rg");
 
     var stg = new StorageAccount("dadjokesa", new StorageAccountArgs
@@ -45,8 +49,28 @@ return await Pulumi.Deployment.RunAsync(() =>
         }
     });
 
-    // Note: Azure OpenAI model deployment can be done manually in Azure Portal
-    // Different regions support different models, so this is commented out for flexibility
+    // GPT-4o-mini deployment
+    var gptDeployment = new Pulumi.AzureNative.CognitiveServices.Deployment("gpt-4o-mini-deployment", new Pulumi.AzureNative.CognitiveServices.DeploymentArgs
+    {
+        AccountName = openAI.Name,
+        ResourceGroupName = rg.Name,
+        DeploymentName = "gpt-4o-mini",
+        Properties = new Pulumi.AzureNative.CognitiveServices.Inputs.DeploymentPropertiesArgs
+        {
+            Model = new Pulumi.AzureNative.CognitiveServices.Inputs.DeploymentModelArgs
+            {
+                Format = "OpenAI",
+                Name = "gpt-4o-mini",
+                Version = "2024-07-18"
+            },
+            VersionUpgradeOption = Pulumi.AzureNative.CognitiveServices.DeploymentModelVersionUpgradeOption.OnceCurrentVersionExpired
+        },
+        Sku = new Pulumi.AzureNative.CognitiveServices.Inputs.SkuArgs
+        {
+            Name = "Standard",
+            Capacity = 10
+        }
+    });
 
     // Linux Consumption plan for Functions
     var plan = new AppServicePlan("dad-joke-plan", new AppServicePlanArgs
@@ -72,7 +96,7 @@ return await Pulumi.Deployment.RunAsync(() =>
         ResourceGroupName = rg.Name,
         ContainerName = container.Name,
         Type = BlobType.Block,
-        Source = new Pulumi.FileAsset("../function/function-app.zip"),
+        Source = new Pulumi.FileAsset("../function/bin/function-app.zip"),
         ContentType = "application/zip",
     });
 
@@ -116,21 +140,27 @@ return await Pulumi.Deployment.RunAsync(() =>
                 new NameValuePairArgs { Name = "AzureWebJobsStorage",        Value = storageConn },
                 new NameValuePairArgs { Name = "WEBSITE_RUN_FROM_PACKAGE",   Value = packageSasUrl },
                 // Azure OpenAI configuration
-                new NameValuePairArgs { Name = "AZURE_OPENAI_ENDPOINT", Value = "https://dad-joke-openai-custom-new.openai.azure.com/" },
+                new NameValuePairArgs { Name = "AZURE_OPENAI_ENDPOINT", Value = openAI.Properties.Apply(p => p.Endpoint!) },
                 new NameValuePairArgs { Name = "AZURE_OPENAI_DEPLOYMENT_NAME", Value = "gpt-4o-mini" },
+                new NameValuePairArgs {
+                    Name = "AZURE_OPENAI_API_KEY",
+                    Value = Output.Tuple(rg.Name, openAI.Name).Apply(async t => {
+                        var (rgName, acctName) = t;
+                        var keys = await Pulumi.AzureNative.CognitiveServices.ListAccountKeys.InvokeAsync(new()
+                        {
+                            ResourceGroupName = rgName,
+                            AccountName = acctName
+                        });
+                        return keys.Key1!;
+                    })
+                },
+                new NameValuePairArgs { Name = "APP_RESTART_TIME", Value = $"{DateTime.UtcNow:yyyy-MM-dd-HH-mm-ss-fff}" },
             },
             Http20Enabled = true,
         }
     });
 
-    // Role assignment to give Function App access to Azure OpenAI
-    var roleAssignment = new RoleAssignment("openai-access", new RoleAssignmentArgs
-    {
-        Scope = openAI.Id,
-        RoleDefinitionId = "/subscriptions/0282681f-7a9e-424b-80b2-96babd57a8a1/providers/Microsoft.Authorization/roleDefinitions/5e0bd9bd-7b93-4f28-af87-19fc36ad61bd", // Cognitive Services OpenAI User
-        PrincipalId = app.Identity.Apply(i => i!.PrincipalId!),
-        PrincipalType = PrincipalType.ServicePrincipal
-    });
+    // Note: Using API key authentication instead of role assignments for more reliable OpenAI access
 
     return new Dictionary<string, object?>
     {
