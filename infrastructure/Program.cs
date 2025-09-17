@@ -117,6 +117,7 @@ return await Pulumi.Deployment.RunAsync(() =>
                 new NameValuePairArgs { Name = "WEBSITE_RUN_FROM_PACKAGE",   Value = packageSasUrl },
                 // Azure OpenAI configuration
                 new NameValuePairArgs { Name = "AZURE_OPENAI_ENDPOINT", Value = "https://dad-joke-openai-custom-new.openai.azure.com/" },
+                new NameValuePairArgs { Name = "AZURE_OPENAI_DEPLOYMENT_NAME", Value = "gpt-4o-mini" },
             },
             Http20Enabled = true,
         }
