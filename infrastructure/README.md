@@ -1,72 +1,100 @@
-# Azure Native C# Pulumi Template
+# Dad Joke Function - Pulumi + Azure + OpenAI Demo
 
-A minimal, end-to-end Pulumi template for C# that provisions a Resource Group and Storage Account in Microsoft Azure using the Azure Native provider.
+A complete Infrastructure as Code demo showcasing how Pulumi, C#, and Azure work together to deploy a serverless AI-powered joke generator.
 
 ## Overview
 
-This template demonstrates a simple Pulumi program written in C# that:
-- Creates an Azure Resource Group
-- Creates an Azure Storage Account (Standard_LRS, StorageV2)
-- Retrieves the primary Storage Account key and exports it as a secret output
+This demo creates a fully functional Azure Function App that generates jokes using Azure OpenAI, with everything defined as Infrastructure as Code using Pulumi:
 
-Use this template as a foundation for building more complex Azure infrastructure in C#.
+- **🏗️ Azure Infrastructure** - Resource Group, Storage Account, Function App, OpenAI service
+- **⚡ Azure Functions** - .NET 8 isolated worker serverless functions
+- **🤖 Azure OpenAI** - GPT-4o-mini for joke generation
+- **☁️ Modern Deployment** - Zip-based deployment via blob storage and SAS URLs
+- **🔄 End-to-End Automation** - Single command deploys both infrastructure and application code
 
 ## Prerequisites
 
-- .NET SDK 6.0 or higher
+- .NET SDK 8.0 or higher
 - Pulumi CLI (v3.x or later)
-- An Azure subscription
-- Azure CLI or other authentication method (run `az login` to authenticate)
+- An Azure subscription with access to Azure OpenAI
+- Azure CLI authentication (`az login`)
 
-## Quickstart
+## Quick Start
 
-1. Create a new project from this template:
+1. **Build the function app:**
    ```bash
-   pulumi new azure-csharp
+   cd ../function
+   ./package.sh
    ```
-2. (Optional) Review or override the default region:
+
+2. **Deploy everything:**
    ```bash
-   pulumi config set azure-native:location WestUS2
-   ```
-3. Preview and deploy your stack:
-   ```bash
-   pulumi preview
+   cd ../infrastructure
    pulumi up
    ```
-4. When no longer needed, destroy the stack to clean up resources:
+
+3. **Test your joke API:**
+   ```bash
+   # Get a random joke
+   curl https://your-function-url.azurewebsites.net/api/joke
+
+   # Get a joke about cats
+   curl "https://your-function-url.azurewebsites.net/api/joke?keywords=cats"
+   ```
+
+4. **Clean up when done:**
    ```bash
    pulumi destroy
    ```
 
-## Project Layout
+## Project Structure
 
 ```
-./
-├── Pulumi.yaml             # Pulumi project configuration
-├── Program.cs              # C# code defining Azure resources
-├── <ProjectName>.csproj    # .NET project file
-├── bin/                    # Build output (auto-generated)
-└── obj/                    # Build artifacts (auto-generated)
+c3-azure/
+├── function/                    # Azure Function App
+│   ├── JokeFunctions.cs         # HTTP trigger function
+│   ├── Program.cs               # Function app configuration
+│   ├── package.sh               # Build and package script
+│   └── DadJokeFunctionApp.csproj
+└── infrastructure/              # Pulumi Infrastructure as Code
+    ├── Program.cs               # Azure resources definition
+    ├── infrastructure.csproj    # Pulumi project
+    └── README.md                # This file
 ```
 
-## Configuration
+## What Gets Created
 
-| Key                   | Description                     | Default |
-|-----------------------|---------------------------------|---------|
-| azure-native:location | Azure region for resource group | WestUS2 |
+- **Resource Group** - Container for all resources
+- **Storage Account** - For Function App storage and deployment packages
+- **Azure OpenAI** - Cognitive Services account with GPT-4o-mini deployment
+- **App Service Plan** - Linux consumption plan for serverless functions
+- **Function App** - .NET 8 isolated worker with API key authentication
 
-## Outputs
+## API Endpoints
 
-- `primaryStorageKey` (secret): The primary key of the Storage Account
+- `GET /api/joke` - Returns a random dad joke
+- `GET /api/joke?keywords=topic` - Returns a joke about the specified topic
 
-## Next Steps
+## Key Technologies Demonstrated
 
-- Extend `Program.cs` to add more Azure services (Virtual Networks, App Services, SQL Databases, and more)
-- Explore the [Pulumi Azure Native provider documentation](https://www.pulumi.com/docs/reference/pkg/azure-native/)
-- Check out other templates in the [Pulumi Templates repository](https://github.com/pulumi/templates)
+- **Pulumi Infrastructure as Code** - Complete Azure infrastructure defined in C#
+- **Azure Native Provider** - Direct Azure ARM API integration
+- **Azure Functions** - Serverless .NET 8 isolated worker model
+- **Azure OpenAI Integration** - GPT-4o-mini deployment and API key authentication
+- **Modern Deployment** - Zip packages deployed via blob storage SAS URLs
 
-## Getting Help
+## Architecture Highlights
 
-- Join the Pulumi Community on Slack: https://pulumi.com/slack
-- Browse or file issues: https://github.com/pulumi/pulumi-azure-native/issues
-- Pulumi Docs: https://www.pulumi.com/docs/
+This demo showcases several best practices:
+
+- **Infrastructure as Code** - Everything reproducible and version-controlled
+- **Serverless Architecture** - Pay-per-use consumption plan
+- **API Key Authentication** - Simple, reliable OpenAI access
+- **Single Command Deployment** - Build, package, and deploy in one step
+- **Clean Resource Management** - Easy teardown with `pulumi destroy`
+
+## Learning Resources
+
+- [Pulumi Azure Native Documentation](https://www.pulumi.com/docs/reference/pkg/azure-native/)
+- [Azure Functions Documentation](https://docs.microsoft.com/en-us/azure/azure-functions/)
+- [Azure OpenAI Service Documentation](https://docs.microsoft.com/en-us/azure/cognitive-services/openai/)

@@ -84,23 +84,27 @@ The infrastructure code sets up:
 
 ## 💻 Step 3: Build the Azure Function
 
+The Azure Function code includes:
+- `JokeFunctions.cs` - HTTP trigger function with single `/api/joke` endpoint
+- `Program.cs` - Function app configuration with Azure OpenAI client setup
+- `package.sh` - Convenient build and packaging script
+- API key authentication for reliable OpenAI access
+- Clean error handling and logging
+
 ## 🚀 Step 4: Deploy to Azure
 
 ### Prepare Function Package
 
-Build and package the function code:
+Build and package the function code using the provided script:
 
 ```bash
 cd function
 
-# Build and package the function code
-dotnet publish -c Release
-cd bin/Release/net8.0/publish
-zip -r ../../function-app.zip .
-cd ../../../../../infrastructure
+# Use the package script to build and package
+./package.sh
 ```
 
-**This creates `function-app.zip` that Pulumi will deploy automatically.**
+**This creates `bin/function-app.zip` that Pulumi will deploy automatically.**
 
 ### Pure Pulumi Deployment
 
@@ -235,7 +239,7 @@ Consider adding:
 
 **Function returns errors:**
 - Check Azure OpenAI resource is properly provisioned
-- Verify managed identity has proper permissions
+- Verify API key authentication is working
 - Check Application Insights logs for detailed error messages
 
 **No jokes generated:**
@@ -251,9 +255,9 @@ Consider adding:
 - Best tested directly in Azure after deployment
 
 **For local development, you would need:**
-- Azure OpenAI credentials configured locally
-- `az login` for DefaultAzureCredential to work
-- Local debugging is possible but requires Azure connectivity
+- Azure OpenAI API key and endpoint configured locally
+- Environment variables set for `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`
+- Local debugging is possible with proper API key configuration
 
 ## 🔄 Complete Workflow Summary
 
@@ -262,10 +266,10 @@ Here's the entire deployment process from start to finish:
 ```bash
 # 1. Build and package function code
 cd function
-dotnet publish -c Release
-cd bin/Release/net8.0/publish && zip -r ../../function-app.zip . && cd ../../../../../infrastructure
+./package.sh
 
 # 2. Deploy everything with Pulumi
+cd ../infrastructure
 pulumi up --yes
 
 # 3. Test the deployed function immediately
