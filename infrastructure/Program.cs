@@ -5,15 +5,11 @@ using Pulumi.AzureNative.Storage.Inputs;
 using Pulumi.AzureNative.Web;
 using Pulumi.AzureNative.Web.Inputs;
 using Pulumi.AzureNative.CognitiveServices;
-using Pulumi.AzureNative.Authorization;
 using System.Collections.Generic;
 using System;
 
 return await Pulumi.Deployment.RunAsync(() =>
 {
-    // Get current Azure config
-    var clientConfig = Pulumi.AzureNative.Authorization.GetClientConfig.Invoke();
-
     var rg = new ResourceGroup("dad-joke-rg");
 
     var stg = new StorageAccount("dadjokesa", new StorageAccountArgs
@@ -126,10 +122,6 @@ return await Pulumi.Deployment.RunAsync(() =>
         ServerFarmId = plan.Id,
         Kind = "functionapp,linux",
         HttpsOnly = true,
-        Identity = new Pulumi.AzureNative.Web.Inputs.ManagedServiceIdentityArgs
-        {
-            Type = Pulumi.AzureNative.Web.ManagedServiceIdentityType.SystemAssigned
-        },
         SiteConfig = new SiteConfigArgs
         {
             LinuxFxVersion = "DOTNET-ISOLATED|8.0",
@@ -141,7 +133,6 @@ return await Pulumi.Deployment.RunAsync(() =>
                 new NameValuePairArgs { Name = "WEBSITE_RUN_FROM_PACKAGE",   Value = packageSasUrl },
                 // Azure OpenAI configuration
                 new NameValuePairArgs { Name = "AZURE_OPENAI_ENDPOINT", Value = openAI.Properties.Apply(p => p.Endpoint!) },
-                new NameValuePairArgs { Name = "AZURE_OPENAI_DEPLOYMENT_NAME", Value = "gpt-4o-mini" },
                 new NameValuePairArgs {
                     Name = "AZURE_OPENAI_API_KEY",
                     Value = Output.Tuple(rg.Name, openAI.Name).Apply(async t => {
@@ -154,13 +145,12 @@ return await Pulumi.Deployment.RunAsync(() =>
                         return keys.Key1!;
                     })
                 },
-                new NameValuePairArgs { Name = "APP_RESTART_TIME", Value = $"{DateTime.UtcNow:yyyy-MM-dd-HH-mm-ss-fff}" },
             },
             Http20Enabled = true,
         }
     });
 
-    // Note: Using API key authentication instead of role assignments for more reliable OpenAI access
+    // Using API key authentication for OpenAI access
 
     return new Dictionary<string, object?>
     {
