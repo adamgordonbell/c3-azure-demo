@@ -19,8 +19,8 @@ dotnet publish -c Release -o bin/publish
 
 # Create deployment package
 echo "📝 Creating deployment package..."
-cd bin
-zip -r function-app.zip publish/
+cd bin/publish
+zip -r ../function-app.zip .
 
 echo "✅ Function app packaged successfully!"
 echo "📦 Package location: bin/function-app.zip"
