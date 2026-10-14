@@ -361,3 +361,6 @@ publish/
 # Pulumi
 Pulumi.*.yaml
 !Pulumi.yaml
+
+# Local Pulumi state backend
+.pulumi/
